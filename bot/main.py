@@ -4,7 +4,7 @@ from telegram.ext import Application, MessageHandler, filters
 from bot.config import settings
 from bot.database import MongoDB
 from bot.handlers import handle_message
-from bot.models import TelegramMessage
+from bot.models import TelegramMessage, TelegramUser
 from bot.sheets import SheetsService
 from bot.utils.logger import setup_logging
 
@@ -19,7 +19,7 @@ async def startup(application: Application) -> None:
 
     await MongoDB.connect(
         mongodb_uri=settings.mongodb_uri,
-        document_models=[TelegramMessage],
+        document_models=[TelegramMessage, TelegramUser],
     )
 
     application.bot_data["sheets_service"] = SheetsService(

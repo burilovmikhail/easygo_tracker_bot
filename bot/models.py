@@ -23,3 +23,16 @@ class TelegramMessage(Document):
                 expireAfterSeconds=86400,  # 24 hours
             )
         ]
+
+
+class TelegramUser(Document):
+    """Persistent user profile storing the preferred report nickname."""
+
+    user_id: int
+    nickname: str
+
+    class Settings:
+        name = "users"
+        indexes = [
+            IndexModel([("user_id", ASCENDING)], unique=True),
+        ]

@@ -1,12 +1,13 @@
 import asyncio
 from datetime import datetime, timezone
+from typing import Optional
 
 import structlog
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.config import settings
-from bot.models import TelegramMessage
+from bot.models import TelegramMessage, TelegramUser
 from bot.parser import parse_report
 
 logger = structlog.get_logger()
@@ -49,6 +50,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ---------------------------------------------------------------------------
+# Internal — helpers
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_nickname(user_id: Optional[int], parsed_nickname: Optional[str]) -> Optional[str]:
+    """Return the nickname for this report; upsert TelegramUser as a side-effect.
+
+    Resolution order:
+    1. Use ``parsed_nickname`` from the message text if present.
+    2. Fall back to the stored nickname for ``user_id`` when no nickname was parsed.
+
+    When ``user_id`` is known and ``parsed_nickname`` is provided, the stored
+    profile is created or updated to keep it in sync.
+    """
+    if parsed_nickname:
+        if user_id is not None:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+            if user is None:
+                await TelegramUser(user_id=user_id, nickname=parsed_nickname).insert()
+            elif user.nickname != parsed_nickname:
+                user.nickname = parsed_nickname
+                await user.save()
+        return parsed_nickname
+
+    if user_id is not None:
+        user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+        if user:
+            return user.nickname
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Internal — report processing
 # ---------------------------------------------------------------------------
 
@@ -58,11 +92,18 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     message = update.message or update.channel_post
     chat_id = message.chat_id
     message_id = message.message_id
+    user_id = message.from_user.id if message.from_user else None
 
     report = parse_report(message.text)
 
+    try:
+        nickname = await _resolve_nickname(user_id, report.nickname)
+    except Exception as exc:
+        logger.error("Failed to resolve nickname from DB", error=str(exc))
+        nickname = report.nickname
+
     # Validate required fields
-    if not report.nickname:
+    if not nickname:
         await context.bot.send_message(
             chat_id=chat_id,
             text="Отсутствует #ник",
@@ -94,13 +135,13 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         await asyncio.to_thread(
             sheets_service.write_steps,
-            report.nickname,
+            nickname,
             report_date,
             report.steps,
         )
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"#{report.nickname} - принято",
+            text=f"#{nickname} - принято",
             reply_to_message_id=message_id,
         )
     except Exception as exc:
