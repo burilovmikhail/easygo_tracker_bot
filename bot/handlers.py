@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
+from beanie.operators import Set
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from bot.config import settings
-from bot.models import TelegramMessage, TelegramUser
+from bot.models import TelegramMessage, TelegramUser, StepReport
 from bot.parser import parse_report
 
 logger = structlog.get_logger()
@@ -139,11 +140,6 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             report_date,
             report.steps,
         )
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"#{nickname} - принято",
-            reply_to_message_id=message_id,
-        )
     except Exception as exc:
         logger.error("Failed to write to Google Sheets", error=str(exc))
         await context.bot.send_message(
@@ -151,3 +147,26 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text="Ошибка сохранения данных",
             reply_to_message_id=message_id,
         )
+        return
+
+    try:
+        await StepReport.find_one(
+            StepReport.nickname == nickname,
+            StepReport.date == report_date,
+        ).upsert(
+            Set({StepReport.steps: report.steps}),
+            on_insert=StepReport(
+                user_id=user_id,
+                nickname=nickname,
+                date=report_date,
+                steps=report.steps,
+            ),
+        )
+    except Exception as exc:
+        logger.error("Failed to save report to MongoDB", error=str(exc))
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"#{nickname} - принято",
+        reply_to_message_id=message_id,
+    )

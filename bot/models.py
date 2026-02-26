@@ -36,3 +36,18 @@ class TelegramUser(Document):
         indexes = [
             IndexModel([("user_id", ASCENDING)], unique=True),
         ]
+
+
+class StepReport(Document):
+    """Parsed step report submitted via #отчет."""
+
+    user_id: Optional[int] = None
+    nickname: str
+    date: datetime
+    steps: int
+
+    class Settings:
+        name = "reports"
+        indexes = [
+            IndexModel([("nickname", ASCENDING), ("date", ASCENDING)]),
+        ]
