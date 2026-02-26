@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -46,8 +46,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as exc:
         logger.error("Failed to save message to MongoDB", error=str(exc))
 
-    if "#отчет" in message.text.lower():
+    text_lower = message.text.lower()
+    if "#отчет" in text_lower:
         await _handle_report(update, context)
+    elif _is_bot_mentioned(message, context.bot.username):
+        if "today-top" in text_lower:
+            await _handle_today_top(update, context)
+        elif "month-top" in text_lower:
+            await _handle_month_top(update, context)
+        elif "totals" in text_lower:
+            await _handle_totals(update, context)
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +89,109 @@ async def _resolve_nickname(user_id: Optional[int], parsed_nickname: Optional[st
             return user.nickname
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Internal — mention detection
+# ---------------------------------------------------------------------------
+
+
+def _is_bot_mentioned(message, bot_username: str) -> bool:
+    """Return True if the bot is explicitly @mentioned in the message."""
+    if not message.entities:
+        return False
+    for entity in message.entities:
+        if entity.type == "mention":
+            mention = message.text[entity.offset : entity.offset + entity.length]
+            if mention.lstrip("@").lower() == bot_username.lower():
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Internal — query commands (today-top, month-top, totals)
+# ---------------------------------------------------------------------------
+
+
+async def _handle_today_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with the top-5 step counts for today, descending."""
+    message = update.message or update.channel_post
+    now = datetime.now(timezone.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+
+    try:
+        reports = (
+            await StepReport.find(StepReport.date >= start, StepReport.date < end)
+            .sort("-steps")
+            .limit(5)
+            .to_list()
+        )
+    except Exception as exc:
+        logger.error("Failed to query today-top", error=str(exc))
+        return
+
+    if not reports:
+        text = "Нет данных за сегодня"
+    else:
+        lines = ["Топ-5 за сегодня:"]
+        for i, r in enumerate(reports, 1):
+            lines.append(f"{i}. #{r.nickname} — {r.steps:,} шагов")
+        text = "\n".join(lines)
+
+    await context.bot.send_message(chat_id=message.chat_id, text=text)
+
+
+async def _handle_month_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with the top-5 step totals for the current month, descending."""
+    message = update.message or update.channel_post
+    now = datetime.now(timezone.utc)
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end = start.replace(year=now.year + 1, month=1) if now.month == 12 else start.replace(month=now.month + 1)
+
+    try:
+        results = await StepReport.aggregate([
+            {"$match": {"date": {"$gte": start, "$lt": end}}},
+            {"$group": {"_id": "$nickname", "total": {"$sum": "$steps"}}},
+            {"$sort": {"total": -1}},
+            {"$limit": 5},
+        ]).to_list()
+    except Exception as exc:
+        logger.error("Failed to query month-top", error=str(exc))
+        return
+
+    if not results:
+        text = "Нет данных за этот месяц"
+    else:
+        lines = ["Топ-5 за месяц:"]
+        for i, r in enumerate(results, 1):
+            lines.append(f"{i}. #{r['_id']} — {r['total']:,} шагов")
+        text = "\n".join(lines)
+
+    await context.bot.send_message(chat_id=message.chat_id, text=text)
+
+
+async def _handle_totals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with total steps per nickname (all time, unordered)."""
+    message = update.message or update.channel_post
+
+    try:
+        results = await StepReport.aggregate([
+            {"$group": {"_id": "$nickname", "total": {"$sum": "$steps"}}},
+        ]).to_list()
+    except Exception as exc:
+        logger.error("Failed to query totals", error=str(exc))
+        return
+
+    if not results:
+        text = "Нет данных"
+    else:
+        lines = ["Итого шагов:"]
+        for r in results:
+            lines.append(f"#{r['_id']} — {r['total']:,}")
+        text = "\n".join(lines)
+
+    await context.bot.send_message(chat_id=message.chat_id, text=text)
 
 
 # ---------------------------------------------------------------------------
