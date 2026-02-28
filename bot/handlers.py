@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -56,6 +57,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await _handle_month_top(update, context)
         elif "totals" in text_lower:
             await _handle_totals(update, context)
+        else:
+            await _handle_ai_query(update, context)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +195,48 @@ async def _handle_totals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text = "\n".join(lines)
 
     await context.bot.send_message(chat_id=message.chat_id, text=text)
+
+
+# ---------------------------------------------------------------------------
+# Internal — AI query
+# ---------------------------------------------------------------------------
+
+
+def _strip_bot_mention(text: str, bot_username: str) -> str:
+    """Remove @BotName from the message text so the LLM sees only the question."""
+    return re.sub(rf"@{re.escape(bot_username)}\s*", "", text, flags=re.IGNORECASE).strip()
+
+
+async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Forward the question to the AI service and reply with its answer."""
+    message = update.message or update.channel_post
+
+    ai_service = context.bot_data.get("ai_service")
+    if ai_service is None:
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text="AI не настроен.",
+            reply_to_message_id=message.message_id,
+        )
+        return
+
+    question = _strip_bot_mention(message.text, context.bot.username)
+    if not question:
+        return
+
+    user_id = message.from_user.id if message.from_user else None
+
+    try:
+        answer = await ai_service.handle_question(question, user_id)
+    except Exception as exc:
+        logger.error("AI query failed", error=str(exc))
+        answer = "Произошла ошибка при обращении к ИИ."
+
+    await context.bot.send_message(
+        chat_id=message.chat_id,
+        text=answer,
+        reply_to_message_id=message.message_id,
+    )
 
 
 # ---------------------------------------------------------------------------

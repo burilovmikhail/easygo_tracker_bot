@@ -1,6 +1,7 @@
 import structlog
 from telegram.ext import Application, MessageHandler, filters
 
+from bot.ai import AIService
 from bot.config import settings
 from bot.database import MongoDB
 from bot.handlers import handle_message
@@ -26,6 +27,15 @@ async def startup(application: Application) -> None:
         credentials_path=settings.google_credentials_path,
         spreadsheet_id=settings.google_sheet_id,
     )
+
+    if settings.openai_api_key:
+        application.bot_data["ai_service"] = AIService(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+        )
+        logger.info("AIService initialised", model=settings.openai_model)
+    else:
+        logger.info("OPENAI_API_KEY not set — AI features disabled")
 
     logger.info("Startup complete")
 

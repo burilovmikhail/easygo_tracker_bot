@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Google Sheets Configuration
     google_sheet_id: str
     google_credentials_path: str = "credentials.json"
+
+    # OpenAI
+    openai_api_key: Optional[str] = None
+    openai_model: str = "gpt-4o-mini"
 
     # Logging
     log_level: str = "INFO"
