@@ -37,6 +37,7 @@ class SheetsService:
     def write_steps(self, nickname: str, date: datetime, steps: int) -> None:
         """Write *steps* into the cell (nickname, date), creating row/column if needed."""
         sheet = self._get_sheet()
+        nickname = f"#{nickname}" if not nickname.startswith("#") else nickname
         date_str = date.strftime("%d.%m.%Y")
 
         all_values = sheet.get_all_values()

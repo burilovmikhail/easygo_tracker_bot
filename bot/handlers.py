@@ -48,7 +48,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logger.error("Failed to save message to MongoDB", error=str(exc))
 
     text_lower = message.text.lower()
-    if "#отчет" in text_lower:
+    if "#отчет" in text_lower or "#отчёт" in text_lower:
         await _handle_report(update, context)
     elif _is_bot_mentioned(message, context.bot.username):
         if "today-top" in text_lower:

@@ -30,7 +30,7 @@ def parse_report(text: str) -> ReportData:
 
     # --- nickname ---
     for tag in re.findall(r"#(\w+)", text, re.IGNORECASE):
-        if tag.lower() != "отчет":
+        if tag.lower() not in ("отчет", "отчёт"):
             result.nickname = tag
             break
 
