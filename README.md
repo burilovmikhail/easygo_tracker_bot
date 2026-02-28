@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="easygo_avatar.png" alt="EasyGo Tracker" width="200"/>
+</p>
+
 # EasyGo Tracker
 
 A Telegram bot that collects daily step-count reports from a fitness challenge channel, persists them to MongoDB and Google Sheets, and answers questions via an optional OpenAI-powered assistant.
