@@ -56,9 +56,9 @@ def main() -> None:
     application.post_init = startup
     application.post_shutdown = shutdown
 
-    # Handle all text messages — works for both regular chats and channel posts
+    # Handle text messages and photo/media messages with captions
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        MessageHandler((filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_message)
     )
 
     logger.info("Starting polling...")

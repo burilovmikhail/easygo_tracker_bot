@@ -22,8 +22,16 @@ logger = structlog.get_logger()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Persist every text message to MongoDB, then route #отчет messages."""
-    message = update.message or update.channel_post
-    if message is None or not message.text:
+    logger.debug("handle_message:\n", )
+
+    message = update.effective_message
+    if message is None:
+        logger.info("Empty message")
+        return
+
+    text = message.text or message.caption
+    if not text:
+        logger.info("Empty message text")
         return
 
     # Allowlist check — silently drop anything not from a configured chat.
@@ -41,15 +49,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             chat_id=message.chat_id,
             user_id=message.from_user.id if message.from_user else None,
             username=message.from_user.username if message.from_user else None,
-            text=message.text,
+            text=text,
             date=message.date,
         ).insert()
     except Exception as exc:
         logger.error("Failed to save message to MongoDB", error=str(exc))
 
-    text_lower = message.text.lower()
+    text_lower = text.lower()
     if "#отчет" in text_lower or "#отчёт" in text_lower:
-        await _handle_report(update, context)
+        await _handle_report(update, context, text)
     elif _is_bot_mentioned(message, context.bot.username):
         if "today-top" in text_lower:
             await _handle_today_top(update, context)
@@ -101,11 +109,11 @@ async def _resolve_nickname(user_id: Optional[int], parsed_nickname: Optional[st
 
 def _is_bot_mentioned(message, bot_username: str) -> bool:
     """Return True if the bot is explicitly @mentioned in the message."""
-    if not message.entities:
-        return False
-    for entity in message.entities:
+    text = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
+    for entity in entities:
         if entity.type == "mention":
-            mention = message.text[entity.offset : entity.offset + entity.length]
+            mention = text[entity.offset: entity.offset + entity.length]
             if mention.lstrip("@").lower() == bot_username.lower():
                 return True
     return False
@@ -118,7 +126,8 @@ def _is_bot_mentioned(message, bot_username: str) -> bool:
 
 async def _handle_today_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply with the top-5 step counts for today, descending."""
-    message = update.message or update.channel_post
+    message = update.effective_message
+
     now = datetime.now(timezone.utc)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
@@ -147,10 +156,12 @@ async def _handle_today_top(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def _handle_month_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply with the top-5 step totals for the current month, descending."""
-    message = update.message or update.channel_post
+    message = update.effective_message
+
     now = datetime.now(timezone.utc)
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    end = start.replace(year=now.year + 1, month=1) if now.month == 12 else start.replace(month=now.month + 1)
+    end = start.replace(
+        year=now.year + 1, month=1) if now.month == 12 else start.replace(month=now.month + 1)
 
     try:
         results = await StepReport.aggregate([
@@ -176,7 +187,7 @@ async def _handle_month_top(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 async def _handle_totals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply with total steps per nickname (all time, unordered)."""
-    message = update.message or update.channel_post
+    message = update.effective_message
 
     try:
         results = await StepReport.aggregate([
@@ -209,7 +220,7 @@ def _strip_bot_mention(text: str, bot_username: str) -> str:
 
 async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Forward the question to the AI service and reply with its answer."""
-    message = update.message or update.channel_post
+    message = update.effective_message
 
     ai_service = context.bot_data.get("ai_service")
     if ai_service is None:
@@ -244,14 +255,14 @@ async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 # ---------------------------------------------------------------------------
 
 
-async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> None:
     """Parse the #отчет message, validate, and write to Google Sheets."""
-    message = update.message or update.channel_post
+    message = update.effective_message
     chat_id = message.chat_id
     message_id = message.message_id
     user_id = message.from_user.id if message.from_user else None
 
-    report = parse_report(message.text)
+    report = parse_report(text)
 
     try:
         nickname = await _resolve_nickname(user_id, report.nickname)
