@@ -15,6 +15,9 @@ def setup_logging():
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
     )
 
+    # Suppress noisy httpx polling logs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     # Configure structlog
     structlog.configure(
         processors=[

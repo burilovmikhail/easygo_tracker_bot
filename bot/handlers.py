@@ -1,14 +1,16 @@
 import asyncio
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
 from beanie.operators import Set
-from telegram import Update
+from telegram import ReactionTypeEmoji, Update
 from telegram.ext import ContextTypes
 
 from bot.config import settings
+from bot.medals import assign_medals_job
 from bot.models import TelegramMessage, TelegramUser, StepReport
 from bot.parser import parse_report
 
@@ -58,6 +60,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text_lower = text.lower()
     if "#отчет" in text_lower or "#отчёт" in text_lower:
         await _handle_report(update, context, text)
+    elif re.search(r'ии[\s\-]*говно', text_lower):
+        await _react_ai_insult(update, context)
     elif _is_bot_mentioned(message, context.bot.username):
         if "today-top" in text_lower:
             await _handle_today_top(update, context)
@@ -65,6 +69,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await _handle_month_top(update, context)
         elif "totals" in text_lower:
             await _handle_totals(update, context)
+        elif "generate-medals" in text_lower:
+            await _handle_generate_medals(update, context)
         else:
             await _handle_ai_query(update, context)
 
@@ -208,6 +214,13 @@ async def _handle_totals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_message(chat_id=message.chat_id, text=text)
 
 
+async def _handle_generate_medals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manually trigger the medal assignment job (same logic as the scheduled run)."""
+    message = update.effective_message
+    await context.bot.send_message(chat_id=message.chat_id, text="Рассчитываю медали...")
+    await assign_medals_job(context)
+
+
 # ---------------------------------------------------------------------------
 # Internal — AI query
 # ---------------------------------------------------------------------------
@@ -251,6 +264,25 @@ async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 # ---------------------------------------------------------------------------
+# Internal — AI-insult reaction
+# ---------------------------------------------------------------------------
+
+
+async def _react_ai_insult(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """React with 🖕 or 💩 when someone says ИИ говно / ии-говно."""
+    message = update.effective_message
+    emoji = random.choice(["🖕", "💩"])
+    try:
+        await context.bot.set_message_reaction(
+            chat_id=message.chat_id,
+            message_id=message.message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+    except Exception as exc:
+        logger.warning("Failed to set reaction", error=str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Internal — report processing
 # ---------------------------------------------------------------------------
 
@@ -262,6 +294,8 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     message_id = message.message_id
     user_id = message.from_user.id if message.from_user else None
 
+    logger.info("Parsing report...", text=text)
+
     report = parse_report(text)
 
     try:
@@ -272,6 +306,7 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
 
     # Validate required fields
     if not nickname:
+        logger.warning("Missing nickname in report", text=text)
         await context.bot.send_message(
             chat_id=chat_id,
             text="Отсутствует #ник",
@@ -280,6 +315,8 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
         return
 
     if report.steps is None:
+        logger.warning("Missing steps in report", text=text)
+
         await context.bot.send_message(
             chat_id=chat_id,
             text="Отсутствует количество шагов",
@@ -299,6 +336,9 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
             reply_to_message_id=message_id,
         )
         return
+
+    logger.info("Recording steps", nickname=nickname,
+                report_date=report_date, steps=report.steps)
 
     try:
         await asyncio.to_thread(

@@ -54,8 +54,13 @@ class AIService:
         question: str,
         asking_user_id: Optional[int],
     ) -> str:
+        logger.info("Handling question", question)
+
         """Two-step flow: classify required context, then answer with it."""
         decision = await self._classify_context(question)
+
+        logger.info(".. decision made", decision=decision)
+
         context_type = decision.get("context", "none")
         nickname: Optional[str] = decision.get("nickname") or None
 
@@ -65,6 +70,9 @@ class AIService:
             user = await TelegramUser.find_one(TelegramUser.user_id == asking_user_id)
             if user:
                 nickname = user.nickname
+
+        logger.info(".. using context type and nickname",
+                    context_type=context_type, nickname=nickname)
 
         context_text = await self._fetch_context(context_type, nickname)
         return await self._answer(question, context_text)
@@ -100,7 +108,8 @@ class AIService:
             if context_type in ("user_steps", "all_steps"):
                 return await self._fetch_step_reports(nickname)
         except Exception as exc:
-            logger.error("Failed to fetch context", context=context_type, error=str(exc))
+            logger.error("Failed to fetch context",
+                         context=context_type, error=str(exc))
         return ""
 
     async def _fetch_message_history(self) -> str:
@@ -111,6 +120,8 @@ class AIService:
             f"[{m.date.strftime('%d.%m %H:%M')}] @{m.username or '?'}: {m.text}"
             for m in reversed(msgs)
         ]
+        logger.info("Fetched message history", lines_count=len(lines))
+
         return "Channel messages (last 24 h):\n" + "\n".join(lines)
 
     async def _fetch_step_reports(self, nickname: Optional[str]) -> str:
@@ -124,6 +135,9 @@ class AIService:
                 .sort("date")
                 .to_list()
             )
+            logger.info(
+                f"Fetched steps for {nickname}", reports_count=len(reports))
+
             header = f"Step reports for #{nickname} (last 30 days):"
             empty_msg = f"No step data found for #{nickname} in the last 30 days."
         else:
@@ -132,6 +146,9 @@ class AIService:
                 .sort("date")
                 .to_list()
             )
+            logger.info(f"Fetched steps for all users",
+                        reports_count=len(reports))
+
             header = "Step reports for all users (last 30 days):"
             empty_msg = "No step data in the last 30 days."
 
