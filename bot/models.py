@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from beanie import Document
@@ -50,4 +51,35 @@ class StepReport(Document):
         name = "reports"
         indexes = [
             IndexModel([("nickname", ASCENDING), ("date", ASCENDING)]),
+        ]
+
+
+class MedalType(str, Enum):
+    GOLD = "gold"
+    SILVER = "silver"
+    BRONZE = "bronze"
+
+
+MEDAL_SYMBOLS: dict[MedalType, str] = {
+    MedalType.GOLD: "🥇",
+    MedalType.SILVER: "🥈",
+    MedalType.BRONZE: "🥉",
+}
+
+
+class MedalRecord(Document):
+    """Medal awarded to a user for a specific day."""
+
+    user_id: Optional[int] = None
+    nickname: str
+    date: datetime  # the calendar day the medal is for (MSK midnight, UTC-stored)
+    medal: MedalType
+
+    class Settings:
+        name = "medals"
+        indexes = [
+            IndexModel(
+                [("date", ASCENDING), ("nickname", ASCENDING)],
+                unique=True,
+            ),
         ]

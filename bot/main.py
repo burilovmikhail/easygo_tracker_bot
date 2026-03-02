@@ -1,3 +1,5 @@
+from datetime import time, timezone
+
 import structlog
 from telegram.ext import Application, MessageHandler, filters
 
@@ -5,7 +7,8 @@ from bot.ai import AIService
 from bot.config import settings
 from bot.database import MongoDB
 from bot.handlers import handle_message
-from bot.models import TelegramMessage, TelegramUser, StepReport
+from bot.medals import assign_medals_job
+from bot.models import TelegramMessage, TelegramUser, StepReport, MedalRecord
 from bot.sheets import SheetsService
 from bot.utils.logger import setup_logging
 
@@ -20,12 +23,13 @@ async def startup(application: Application) -> None:
 
     await MongoDB.connect(
         mongodb_uri=settings.mongodb_uri,
-        document_models=[TelegramMessage, TelegramUser, StepReport],
+        document_models=[TelegramMessage, TelegramUser, StepReport, MedalRecord],
     )
 
     application.bot_data["sheets_service"] = SheetsService(
         credentials_path=settings.google_credentials_path,
         spreadsheet_id=settings.google_sheet_id,
+        steps_worksheet=settings.worksheet_name,
     )
 
     if settings.openai_api_key:
@@ -36,6 +40,11 @@ async def startup(application: Application) -> None:
         logger.info("AIService initialised", model=settings.openai_model)
     else:
         logger.info("OPENAI_API_KEY not set — AI features disabled")
+
+    # Schedule daily medal assignment at 20:00 MSK (17:00 UTC)
+    _20_MSK_IN_UTC = time(hour=17, minute=0, tzinfo=timezone.utc)
+    application.job_queue.run_daily(assign_medals_job, time=_20_MSK_IN_UTC)
+    logger.info("Medal assignment job scheduled", utc_time="17:00")
 
     logger.info("Startup complete")
 
