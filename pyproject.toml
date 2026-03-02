@@ -5,7 +5,7 @@ description = "Telegram Bot"
 requires-python = ">=3.11,<4.0"
 dependencies = [
     # Telegram Bot
-    "python-telegram-bot[ext]==20.7",
+    "python-telegram-bot[ext]==22.6",
     # MongoDB and ODM
     "motor==3.4.0",
     "beanie==1.25.0",

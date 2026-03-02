@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -24,7 +25,7 @@ The bot stores the following data:
 
 Analyse the user's question and return JSON with exactly two fields:
   "context":  one of "none", "message_history", "user_steps", "all_steps"
-  "nickname": null, or the nickname mentioned in the question (lowercase, without #)
+  "nickname": null, or the nickname mentioned in the question (lowercase, without #, preserve original script — do NOT transliterate Cyrillic to Latin)
 
 Rules:
 - Set "nickname" only when "context" is "user_steps" AND the question names a specific person.
@@ -34,7 +35,8 @@ Rules:
 
 _ANSWER_SYSTEM = """\
 You are a helpful assistant for a step-tracking fitness challenge in a Telegram channel.
-Today is {today}. Answer in the same language as the question (usually Russian).
+Today is {today}. Yesterday was {yesterday}.
+Answer in the same language as the question (usually Russian).
 Be concise and precise. If the provided data is insufficient to answer, say so clearly.\
 """
 
@@ -130,7 +132,7 @@ class AIService:
             reports = (
                 await StepReport.find(
                     StepReport.date >= since,
-                    StepReport.nickname == nickname,
+                    {"nickname": {"$regex": f"^{re.escape(nickname)}$", "$options": "i"}},
                 )
                 .sort("date")
                 .to_list()
@@ -166,8 +168,10 @@ class AIService:
     # ------------------------------------------------------------------
 
     async def _answer(self, question: str, context: str) -> str:
-        today = datetime.now(timezone.utc).strftime("%d.%m.%Y")
-        system = _ANSWER_SYSTEM.format(today=today)
+        now = datetime.now(timezone.utc)
+        today = now.strftime("%d.%m.%Y")
+        yesterday = (now - timedelta(days=1)).strftime("%d.%m.%Y")
+        system = _ANSWER_SYSTEM.format(today=today, yesterday=yesterday)
         user_content = (
             f"{question}\n\n<data>\n{context}\n</data>" if context else question
         )

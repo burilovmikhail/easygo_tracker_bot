@@ -24,8 +24,6 @@ logger = structlog.get_logger()
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Persist every text message to MongoDB, then route #отчет messages."""
-    logger.debug("handle_message:\n", )
-
     message = update.effective_message
     if message is None:
         logger.info("Empty message")
@@ -35,6 +33,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         logger.info("Empty message text")
         return
+
+    logger.info("handle_message", text=text)
 
     # Allowlist check — silently drop anything not from a configured chat.
     if settings.allowed_chat_ids and message.chat_id not in settings.allowed_chat_ids:
