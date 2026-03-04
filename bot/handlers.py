@@ -60,8 +60,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text_lower = text.lower()
     if "#отчет" in text_lower or "#отчёт" in text_lower:
         await _handle_report(update, context, text)
-    elif re.search(r'ии[\s\-]*говно', text_lower):
+    elif re.search(r'ии[\s\-]*(говно|какашка|гамно)', text_lower):
         await _react_ai_insult(update, context)
+    elif re.search(r'ии[\s\-]*(лапочка|умничка|молодец|красавчик|красавица|умник|супер|класс)', text_lower):
+        await _react_ai_compliment(update, context)
     elif _is_bot_mentioned(message, context.bot.username):
         if "today-top" in text_lower:
             await _handle_today_top(update, context)
@@ -277,6 +279,19 @@ async def _react_ai_insult(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             chat_id=message.chat_id,
             message_id=message.message_id,
             reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+    except Exception as exc:
+        logger.warning("Failed to set reaction", error=str(exc))
+
+
+async def _react_ai_compliment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """React with 🔥 when someone compliments the bot (ИИ лапочка / умничка / молодец etc.)."""
+    message = update.effective_message
+    try:
+        await context.bot.set_message_reaction(
+            chat_id=message.chat_id,
+            message_id=message.message_id,
+            reaction=[ReactionTypeEmoji(emoji="🔥")],
         )
     except Exception as exc:
         logger.warning("Failed to set reaction", error=str(exc))
