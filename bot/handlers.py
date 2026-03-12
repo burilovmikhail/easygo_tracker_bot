@@ -16,6 +16,9 @@ from bot.parser import parse_report
 
 logger = structlog.get_logger()
 
+# Vladivostok is permanently UTC+10 (no DST since 2014)
+_VLADIVOSTOK_TZ = timezone(timedelta(hours=10))
+
 
 # ---------------------------------------------------------------------------
 # Public handler — registered in main.py
@@ -350,6 +353,27 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
 
     # Default date to today (UTC) when not present in the message
     report_date = report.date or datetime.now(timezone.utc)
+
+    # Validate date: must be within current year and no later than today in Vladivostok
+    vladivostok_today = datetime.now(_VLADIVOSTOK_TZ).date()
+    if report.date is not None:
+        report_date_only = report.date.date()
+        if report_date_only.year != vladivostok_today.year:
+            logger.warning("Report date is outside current year", report_date=report_date_only)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Недопустимая дата: принимаются отчёты только за текущий год",
+                reply_to_message_id=message_id,
+            )
+            return
+        if report_date_only > vladivostok_today:
+            logger.warning("Report date is in the future", report_date=report_date_only)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Недопустимая дата: дата ещё не наступила",
+                reply_to_message_id=message_id,
+            )
+            return
 
     sheets_service = context.bot_data.get("sheets_service")
     if sheets_service is None:
