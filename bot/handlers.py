@@ -252,8 +252,17 @@ async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     user_id = message.from_user.id if message.from_user else None
 
+    asking_nickname: Optional[str] = None
+    if user_id is not None:
+        try:
+            user = await TelegramUser.find_one(TelegramUser.user_id == user_id)
+            if user:
+                asking_nickname = user.nickname
+        except Exception as exc:
+            logger.warning("Failed to resolve asking user nickname", error=str(exc))
+
     try:
-        answer = await ai_service.handle_question(question, user_id)
+        answer = await ai_service.handle_question(question, user_id, asking_nickname)
     except Exception as exc:
         logger.error("AI query failed", error=str(exc))
         answer = "Произошла ошибка при обращении к ИИ."
