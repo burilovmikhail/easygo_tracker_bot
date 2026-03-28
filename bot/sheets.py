@@ -74,27 +74,40 @@ class SheetsService:
         "🥉": {"red": 0.804, "green": 0.498, "blue": 0.196},  # bronze
     }
 
+    # AG (col 33) is totals; medals start at AH (col 34, 1-based).
+    _MEDALS_START_COL = 34  # 1-based
+
     @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
     def write_medal(self, nickname: str, date: datetime, symbol: str) -> None:
-        """Colour the background of the steps cell for (nickname, date).
+        """Write medal symbol into the first empty cell in the medals area (AH+).
 
         🥇 → gold, 🥈 → silver, 🥉 → bronze.
-        Cell value is not modified.
+        The medal symbol is written into the cell and the background is coloured.
         """
+        color = self._MEDAL_COLORS.get(symbol)
+        if color is None:
+            logger.warning("Unknown medal symbol, skipping", symbol=symbol)
+            return
+
         sheet = self._get_sheet()
         nickname = self._normalise_nick(nickname)
 
         all_values = sheet.get_all_values()
-        col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+        _, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
 
-        color = self._MEDAL_COLORS.get(symbol)
-        if color is None:
-            logger.warning("Unknown medal symbol, skipping colour", symbol=symbol)
-            return
+        # Re-fetch the row so we see any changes made by _ensure_cell
+        all_values = sheet.get_all_values()
+        row = all_values[row_idx] if row_idx < len(all_values) else []
 
-        cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
+        # Find first empty cell starting at _MEDALS_START_COL (convert to 0-based)
+        medal_col_idx = self._MEDALS_START_COL - 1
+        while medal_col_idx < len(row) and row[medal_col_idx]:
+            medal_col_idx += 1
+
+        cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, medal_col_idx + 1)
+        sheet.update_cell(row_idx + 1, medal_col_idx + 1, symbol)
         sheet.format(cell_a1, {"backgroundColor": color})
-        logger.info("Coloured medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1)
+        logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -225,50 +238,43 @@ class SheetsService:
 
         logger.info("Created new month section", month=month_header, days=days_in_month)
 
-    def fix_medals_sheet(self) -> int:
-        """Scan the steps sheet, strip medal emoji from cell values and colour cells instead.
+    def fix_medals_sheet(self, medals: list[tuple[str, datetime, str]]) -> int:
+        """Write medals from DB records into the medals area (AH+) of the sheet.
 
-        For every data cell whose text contains 🥇/🥈/🥉 the emoji is removed and the
-        appropriate background colour is applied.  Returns the number of cells fixed.
+        Each entry in *medals* is (nickname, date, symbol).
+        Uses the same logic as write_medal: finds/creates the nickname row, then writes
+        the symbol into the first empty cell starting at AH, coloured appropriately.
+        Returns the number of medals written.
         """
         sheet = self._get_sheet()
-        all_values = sheet.get_all_values()
+        count = 0
 
-        if not all_values:
-            return 0
-
-        # Build set of non-data rows (month headers + dates rows)
-        sections = self._parse_sections(all_values)
-        non_data_rows = set()
-        for s in sections:
-            non_data_rows.add(s["header_row"])
-            non_data_rows.add(s["dates_row"])
-
-        value_updates: list[dict] = []
-        color_updates: list[tuple[str, dict]] = []
-
-        for row_idx, row in enumerate(all_values):
-            if row_idx in non_data_rows:
+        for nickname, date, symbol in medals:
+            color = self._MEDAL_COLORS.get(symbol)
+            if color is None:
+                logger.warning("Unknown medal symbol, skipping", symbol=symbol)
                 continue
-            for col_idx, cell in enumerate(row):
-                if col_idx == 0:
-                    continue  # skip nickname column
-                for symbol, color in self._MEDAL_COLORS.items():
-                    if symbol in cell:
-                        clean = cell.replace(symbol, "").strip()
-                        cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
-                        value_updates.append({"range": cell_a1, "values": [[clean]]})
-                        color_updates.append((cell_a1, color))
-                        break  # a cell can only have one medal
 
-        if value_updates:
-            self._batch_update(sheet, value_updates)
-        for cell_a1, color in color_updates:
+            nickname = self._normalise_nick(nickname)
+            all_values = sheet.get_all_values()
+            _, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+
+            all_values = sheet.get_all_values()
+            row = all_values[row_idx] if row_idx < len(all_values) else []
+
+            medal_col_idx = self._MEDALS_START_COL - 1
+            while medal_col_idx < len(row) and row[medal_col_idx]:
+                medal_col_idx += 1
+
+            cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, medal_col_idx + 1)
+            sheet.update_cell(row_idx + 1, medal_col_idx + 1, symbol)
             self._format_cell(sheet, cell_a1, {"backgroundColor": color})
             time.sleep(1)
+            count += 1
+            logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1)
 
-        logger.info("Fixed medal cells in sheet", count=len(color_updates))
-        return len(color_updates)
+        logger.info("fix_medals_sheet complete", count=count)
+        return count
 
     @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
     def _batch_update(self, sheet: gspread.Worksheet, updates: list[dict]) -> None:

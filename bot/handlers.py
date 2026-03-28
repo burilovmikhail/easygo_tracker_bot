@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes
 
 from bot.config import settings
 from bot.medals import assign_medals_job
-from bot.models import TelegramMessage, TelegramUser, StepReport
+from bot.models import TelegramMessage, TelegramUser, StepReport, MedalRecord, MEDAL_SYMBOLS
 from bot.parser import parse_report
 
 logger = structlog.get_logger()
@@ -229,7 +229,7 @@ async def _handle_generate_medals(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def _handle_fix_medals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Strip medal emoji from sheet cells and replace with background colours."""
+    """Write all DB medal records into the medals area (AH+) of the sheet."""
     message = update.effective_message
     sheets_service = context.bot_data.get("sheets_service")
     if sheets_service is None:
@@ -242,7 +242,18 @@ async def _handle_fix_medals(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_message(chat_id=message.chat_id, text="Исправляю медали в таблице...")
 
     try:
-        fixed = await asyncio.to_thread(sheets_service.fix_medals_sheet)
+        records = await MedalRecord.find_all().to_list()
+        medals = [(r.nickname, r.date, MEDAL_SYMBOLS[r.medal]) for r in records]
+    except Exception as exc:
+        logger.error("Failed to load medal records from DB", error=str(exc))
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text="Ошибка при загрузке медалей из базы данных",
+        )
+        return
+
+    try:
+        fixed = await asyncio.to_thread(sheets_service.fix_medals_sheet, medals)
     except Exception as exc:
         logger.error("Failed to fix medals in sheet", error=str(exc))
         await context.bot.send_message(
@@ -253,7 +264,7 @@ async def _handle_fix_medals(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await context.bot.send_message(
         chat_id=message.chat_id,
-        text=f"Готово. Исправлено ячеек: {fixed}",
+        text=f"Готово. Записано медалей: {fixed}",
     )
 
 
