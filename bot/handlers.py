@@ -76,6 +76,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await _handle_totals(update, context)
         elif "generate-medals" in text_lower:
             await _handle_generate_medals(update, context)
+        elif "fix-medals" in text_lower:
+            await _handle_fix_medals(update, context)
         else:
             await _handle_ai_query(update, context)
 
@@ -224,6 +226,35 @@ async def _handle_generate_medals(update: Update, context: ContextTypes.DEFAULT_
     message = update.effective_message
     await context.bot.send_message(chat_id=message.chat_id, text="Рассчитываю медали...")
     await assign_medals_job(context)
+
+
+async def _handle_fix_medals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Strip medal emoji from sheet cells and replace with background colours."""
+    message = update.effective_message
+    sheets_service = context.bot_data.get("sheets_service")
+    if sheets_service is None:
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text="Ошибка: SheetsService не инициализирован",
+        )
+        return
+
+    await context.bot.send_message(chat_id=message.chat_id, text="Исправляю медали в таблице...")
+
+    try:
+        fixed = await asyncio.to_thread(sheets_service.fix_medals_sheet)
+    except Exception as exc:
+        logger.error("Failed to fix medals in sheet", error=str(exc))
+        await context.bot.send_message(
+            chat_id=message.chat_id,
+            text="Ошибка при исправлении медалей",
+        )
+        return
+
+    await context.bot.send_message(
+        chat_id=message.chat_id,
+        text=f"Готово. Исправлено ячеек: {fixed}",
+    )
 
 
 # ---------------------------------------------------------------------------
