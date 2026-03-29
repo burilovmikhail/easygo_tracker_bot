@@ -93,11 +93,15 @@ class SheetsService:
         nickname = self._normalise_nick(nickname)
 
         all_values = sheet.get_all_values()
-        _, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+        col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
 
         # Re-fetch the row so we see any changes made by _ensure_cell
         all_values = sheet.get_all_values()
         row = all_values[row_idx] if row_idx < len(all_values) else []
+
+        # Format the steps value cell with the medal colour
+        steps_cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
+        sheet.format(steps_cell_a1, {"backgroundColor": color})
 
         # Find first empty cell starting at _MEDALS_START_COL (convert to 0-based)
         medal_col_idx = self._MEDALS_START_COL - 1
@@ -107,7 +111,7 @@ class SheetsService:
         cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, medal_col_idx + 1)
         sheet.update_cell(row_idx + 1, medal_col_idx + 1, symbol)
         sheet.format(cell_a1, {"backgroundColor": color})
-        logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1)
+        logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1, steps_cell=steps_cell_a1)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -257,10 +261,13 @@ class SheetsService:
 
             nickname = self._normalise_nick(nickname)
             all_values = sheet.get_all_values()
-            _, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+            col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
 
             all_values = sheet.get_all_values()
             row = all_values[row_idx] if row_idx < len(all_values) else []
+
+            steps_cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
+            self._format_cell(sheet, steps_cell_a1, {"backgroundColor": color})
 
             medal_col_idx = self._MEDALS_START_COL - 1
             while medal_col_idx < len(row) and row[medal_col_idx]:
