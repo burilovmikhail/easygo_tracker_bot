@@ -65,7 +65,8 @@ class SheetsService:
         col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
 
         sheet.update_cell(row_idx + 1, col_idx + 1, steps)
-        logger.info("Wrote steps to sheet", nickname=nickname, date=date.strftime("%d.%m.%Y"), steps=steps)
+        logger.info("Wrote steps to sheet", nickname=nickname,
+                    date=date.strftime("%d.%m.%Y"), steps=steps)
 
     # RGB (0–1 floats) for each medal place
     _MEDAL_COLORS = {
@@ -111,7 +112,8 @@ class SheetsService:
         cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, medal_col_idx + 1)
         sheet.update_cell(row_idx + 1, medal_col_idx + 1, symbol)
         sheet.format(cell_a1, {"backgroundColor": color})
-        logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1, steps_cell=steps_cell_a1)
+        logger.info("Wrote medal cell", nickname=nickname, date=date.strftime(
+            "%d.%m.%Y"), symbol=symbol, cell=cell_a1, steps_cell=steps_cell_a1)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -173,18 +175,19 @@ class SheetsService:
         month_header = self._month_header(date)
         date_col_str = date.strftime("%d.%m")
 
-        # Find or create the month section
+        # Find the month section
         sections = self._parse_sections(all_values)
-        section = next((s for s in sections if s["month_header"].upper() == month_header), None)
+        section = next(
+            (s for s in sections if s["month_header"].upper() == month_header), None)
 
         if section is None:
-            self._append_month_section(sheet, all_values, date)
-            all_values = sheet.get_all_values()
-            sections = self._parse_sections(all_values)
-            section = next(s for s in sections if s["month_header"].upper() == month_header)
+            raise ValueError(
+                f"Month section for {month_header} not found"
+            )
 
         # Find date column in the pre-filled dates row
-        dates_row = all_values[section["dates_row"]] if section["dates_row"] < len(all_values) else []
+        dates_row = all_values[section["dates_row"]
+                               ] if section["dates_row"] < len(all_values) else []
         col_idx: Optional[int] = None
         for i, cell in enumerate(dates_row):
             if i == 0:
@@ -213,75 +216,10 @@ class SheetsService:
                 sheet.insert_rows([[nickname]], row=row_idx + 1)
             else:
                 sheet.update_cell(row_idx + 1, 1, nickname)
-            logger.info("Created new nickname row", nickname=nickname, row=row_idx + 1)
+            logger.info("Created new nickname row",
+                        nickname=nickname, row=row_idx + 1)
 
         return col_idx, row_idx
-
-    def _append_month_section(
-        self, sheet: gspread.Worksheet, all_values: list[list[str]], date: datetime
-    ) -> None:
-        """Append a new month section pre-filled with all days of the month."""
-        month_header = self._month_header(date)
-        days_in_month = calendar.monthrange(date.year, date.month)[1]
-        dates = [date.replace(day=d).strftime("%d.%m") for d in range(1, days_in_month + 1)]
-
-        header_row_idx = len(all_values)  # 0-based; will be the first new row
-        end_col = len(dates) + 1  # "Ник" col + all date cols
-
-        rows_to_write = [
-            [month_header] + [""] * len(dates),
-            ["Ник"] + dates,
-        ]
-        start_a1 = gspread.utils.rowcol_to_a1(header_row_idx + 1, 1)
-        sheet.update(start_a1, rows_to_write)
-
-        # Merge the month header row across all date columns
-        header_a1_start = gspread.utils.rowcol_to_a1(header_row_idx + 1, 1)
-        header_a1_end = gspread.utils.rowcol_to_a1(header_row_idx + 1, end_col)
-        sheet.merge_cells(f"{header_a1_start}:{header_a1_end}")
-
-        logger.info("Created new month section", month=month_header, days=days_in_month)
-
-    def fix_medals_sheet(self, medals: list[tuple[str, datetime, str]]) -> int:
-        """Write medals from DB records into the medals area (AH+) of the sheet.
-
-        Each entry in *medals* is (nickname, date, symbol).
-        Uses the same logic as write_medal: finds/creates the nickname row, then writes
-        the symbol into the first empty cell starting at AH, coloured appropriately.
-        Returns the number of medals written.
-        """
-        sheet = self._get_sheet()
-        count = 0
-
-        for nickname, date, symbol in medals:
-            color = self._MEDAL_COLORS.get(symbol)
-            if color is None:
-                logger.warning("Unknown medal symbol, skipping", symbol=symbol)
-                continue
-
-            nickname = self._normalise_nick(nickname)
-            all_values = sheet.get_all_values()
-            col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
-
-            all_values = sheet.get_all_values()
-            row = all_values[row_idx] if row_idx < len(all_values) else []
-
-            steps_cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1)
-            self._format_cell(sheet, steps_cell_a1, {"backgroundColor": color})
-
-            medal_col_idx = self._MEDALS_START_COL - 1
-            while medal_col_idx < len(row) and row[medal_col_idx]:
-                medal_col_idx += 1
-
-            cell_a1 = gspread.utils.rowcol_to_a1(row_idx + 1, medal_col_idx + 1)
-            sheet.update_cell(row_idx + 1, medal_col_idx + 1, symbol)
-            self._format_cell(sheet, cell_a1, {"backgroundColor": color})
-            time.sleep(1)
-            count += 1
-            logger.info("Wrote medal cell", nickname=nickname, date=date.strftime("%d.%m.%Y"), symbol=symbol, cell=cell_a1)
-
-        logger.info("fix_medals_sheet complete", count=count)
-        return count
 
     @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
     def _batch_update(self, sheet: gspread.Worksheet, updates: list[dict]) -> None:
@@ -296,5 +234,6 @@ class SheetsService:
         try:
             return spreadsheet.worksheet(self._steps_worksheet)
         except gspread.WorksheetNotFound:
-            logger.info("Worksheet not found, creating it", name=self._steps_worksheet)
+            logger.info("Worksheet not found, creating it",
+                        name=self._steps_worksheet)
             return spreadsheet.add_worksheet(title=self._steps_worksheet, rows=200, cols=50)

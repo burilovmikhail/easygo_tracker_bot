@@ -76,8 +76,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await _handle_totals(update, context)
         elif "generate-medals" in text_lower:
             await _handle_generate_medals(update, context)
-        elif "fix-medals" in text_lower:
-            await _handle_fix_medals(update, context)
         else:
             await _handle_ai_query(update, context)
 
@@ -228,46 +226,6 @@ async def _handle_generate_medals(update: Update, context: ContextTypes.DEFAULT_
     await assign_medals_job(context)
 
 
-async def _handle_fix_medals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Write all DB medal records into the medals area (AH+) of the sheet."""
-    message = update.effective_message
-    sheets_service = context.bot_data.get("sheets_service")
-    if sheets_service is None:
-        await context.bot.send_message(
-            chat_id=message.chat_id,
-            text="Ошибка: SheetsService не инициализирован",
-        )
-        return
-
-    await context.bot.send_message(chat_id=message.chat_id, text="Исправляю медали в таблице...")
-
-    try:
-        records = await MedalRecord.find_all().to_list()
-        medals = [(r.nickname, r.date, MEDAL_SYMBOLS[r.medal]) for r in records]
-    except Exception as exc:
-        logger.error("Failed to load medal records from DB", error=str(exc))
-        await context.bot.send_message(
-            chat_id=message.chat_id,
-            text="Ошибка при загрузке медалей из базы данных",
-        )
-        return
-
-    try:
-        fixed = await asyncio.to_thread(sheets_service.fix_medals_sheet, medals)
-    except Exception as exc:
-        logger.error("Failed to fix medals in sheet", error=str(exc))
-        await context.bot.send_message(
-            chat_id=message.chat_id,
-            text="Ошибка при исправлении медалей",
-        )
-        return
-
-    await context.bot.send_message(
-        chat_id=message.chat_id,
-        text=f"Готово. Записано медалей: {fixed}",
-    )
-
-
 # ---------------------------------------------------------------------------
 # Internal — AI query
 # ---------------------------------------------------------------------------
@@ -304,7 +262,8 @@ async def _handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if user:
                 asking_nickname = user.nickname
         except Exception as exc:
-            logger.warning("Failed to resolve asking user nickname", error=str(exc))
+            logger.warning(
+                "Failed to resolve asking user nickname", error=str(exc))
 
     try:
         answer = await ai_service.handle_question(question, user_id, asking_nickname)
@@ -401,7 +360,8 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     if report.date is not None:
         report_date_only = report.date.date()
         if report_date_only.year != vladivostok_today.year:
-            logger.warning("Report date is outside current year", report_date=report_date_only)
+            logger.warning("Report date is outside current year",
+                           report_date=report_date_only)
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="Недопустимая дата: принимаются отчёты только за текущий год",
@@ -409,7 +369,8 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
             )
             return
         if report_date_only > vladivostok_today:
-            logger.warning("Report date is in the future", report_date=report_date_only)
+            logger.warning("Report date is in the future",
+                           report_date=report_date_only)
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="Недопустимая дата: дата ещё не наступила",
