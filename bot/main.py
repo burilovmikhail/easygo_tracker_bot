@@ -29,7 +29,6 @@ async def startup(application: Application) -> None:
     application.bot_data["sheets_service"] = SheetsService(
         credentials_path=settings.google_credentials_path,
         spreadsheet_id=settings.google_sheet_id,
-        steps_worksheet=settings.worksheet_name,
     )
 
     if settings.openai_api_key:

@@ -20,6 +20,13 @@ _MONTH_NAMES_RU = {
 }
 _MONTH_HEADER_SET = set(_MONTH_NAMES_RU.values())
 
+_SEASON_BY_MONTH = {
+    12: "Зима", 1: "Зима", 2: "Зима",
+    3: "Весна", 4: "Весна", 5: "Весна",
+    6: "Лето", 7: "Лето", 8: "Лето",
+    9: "Осень", 10: "Осень", 11: "Осень",
+}
+
 
 class SheetsService:
     """Read/write helper for the step-tracking Google Spreadsheet.
@@ -42,14 +49,12 @@ class SheetsService:
         self,
         credentials_path: str,
         spreadsheet_id: str,
-        steps_worksheet: str = "Шаги",
     ) -> None:
         creds = Credentials.from_service_account_file(
             credentials_path, scopes=_SCOPES
         )
         self._client = gspread.authorize(creds)
         self._spreadsheet_id = spreadsheet_id
-        self._steps_worksheet = steps_worksheet
 
     # ------------------------------------------------------------------
     # Public API
@@ -58,7 +63,7 @@ class SheetsService:
     @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
     def write_steps(self, nickname: str, date: datetime, steps: int) -> None:
         """Write *steps* into the steps sheet at (nickname, date)."""
-        sheet = self._get_sheet()
+        sheet = self._get_sheet(date)
         nickname = self._normalise_nick(nickname)
 
         all_values = sheet.get_all_values()
@@ -90,7 +95,7 @@ class SheetsService:
             logger.warning("Unknown medal symbol, skipping", symbol=symbol)
             return
 
-        sheet = self._get_sheet()
+        sheet = self._get_sheet(date)
         nickname = self._normalise_nick(nickname)
 
         all_values = sheet.get_all_values()
@@ -229,11 +234,20 @@ class SheetsService:
     def _format_cell(self, sheet: gspread.Worksheet, cell_a1: str, fmt: dict) -> None:
         sheet.format(cell_a1, fmt)
 
-    def _get_sheet(self) -> gspread.Worksheet:
+    @staticmethod
+    def _worksheet_name(date: datetime) -> str:
+        season = _SEASON_BY_MONTH[date.month]
+        if date.month == 12:
+            return f"{season} {date.year}/{date.year + 1}"
+        elif date.month in (1, 2):
+            return f"{season} {date.year - 1}/{date.year}"
+        return f"{season} {date.year}"
+
+    def _get_sheet(self, date: datetime) -> gspread.Worksheet:
         spreadsheet = self._client.open_by_key(self._spreadsheet_id)
+        name = self._worksheet_name(date)
         try:
-            return spreadsheet.worksheet(self._steps_worksheet)
+            return spreadsheet.worksheet(name)
         except gspread.WorksheetNotFound:
-            logger.info("Worksheet not found, creating it",
-                        name=self._steps_worksheet)
-            return spreadsheet.add_worksheet(title=self._steps_worksheet, rows=200, cols=50)
+            logger.info("Worksheet not found, creating it", name=name)
+            return spreadsheet.add_worksheet(title=name, rows=200, cols=50)
