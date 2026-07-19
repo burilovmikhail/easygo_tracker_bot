@@ -13,6 +13,7 @@ from bot.config import settings
 from bot.medals import assign_medals_job
 from bot.models import TelegramMessage, TelegramUser, StepReport, MedalRecord, MEDAL_SYMBOLS
 from bot.parser import parse_report
+from bot.sheets import NicknameNotFoundError
 
 logger = structlog.get_logger()
 
@@ -398,6 +399,16 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
             report_date,
             report.steps,
         )
+    except NicknameNotFoundError:
+        logger.warning("Nickname not found in sheet", nickname=nickname,
+                       report_date=report_date)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Ник {nickname} не найден в таблице — строка не добавлена. "
+                 f"Проверьте, что ник есть в списке участников.",
+            reply_to_message_id=message_id,
+        )
+        return
     except Exception as exc:
         logger.error("Failed to write to Google Sheets", error=str(exc))
         await context.bot.send_message(

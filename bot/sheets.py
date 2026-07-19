@@ -28,6 +28,17 @@ _SEASON_BY_MONTH = {
 }
 
 
+class NicknameNotFoundError(Exception):
+    """Raised when a nickname row is missing and creation is disabled."""
+
+    def __init__(self, nickname: str, month_header: str) -> None:
+        self.nickname = nickname
+        self.month_header = month_header
+        super().__init__(
+            f"Nickname {nickname} not found in section {month_header}"
+        )
+
+
 class SheetsService:
     """Read/write helper for the step-tracking Google Spreadsheet.
 
@@ -60,14 +71,21 @@ class SheetsService:
     # Public API
     # ------------------------------------------------------------------
 
-    @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
+    @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False,
+           dont_retry=(NicknameNotFoundError,))
     def write_steps(self, nickname: str, date: datetime, steps: int) -> None:
-        """Write *steps* into the steps sheet at (nickname, date)."""
+        """Write *steps* into the steps sheet at (nickname, date).
+
+        Raises :class:`NicknameNotFoundError` if the nickname is not present in
+        the target month section (the row is not created automatically).
+        """
         sheet = self._get_sheet(date)
         nickname = self._normalise_nick(nickname)
 
         all_values = sheet.get_all_values()
-        col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+        col_idx, row_idx = self._ensure_cell(
+            sheet, all_values, nickname, date, create_missing=False
+        )
 
         sheet.update_cell(row_idx + 1, col_idx + 1, steps)
         logger.info("Wrote steps to sheet", nickname=nickname,
@@ -172,10 +190,14 @@ class SheetsService:
         all_values: list[list[str]],
         nickname: str,
         date: datetime,
+        create_missing: bool = True,
     ) -> tuple[int, int]:
         """Return (col_idx, row_idx) for (nickname, date), creating them if needed.
 
         Both indices are 0-based; add 1 when calling sheet.update_cell().
+
+        If ``create_missing`` is False and the nickname row is absent, raise
+        :class:`NicknameNotFoundError` instead of appending a new row.
         """
         month_header = self._month_header(date)
         date_col_str = date.strftime("%d.%m")
@@ -215,6 +237,8 @@ class SheetsService:
                 break
 
         if row_idx is None:
+            if not create_missing:
+                raise NicknameNotFoundError(nickname, month_header)
             row_idx = section["data_end"]
             if row_idx < len(all_values):
                 # Another section follows — insert a row to avoid overwriting it

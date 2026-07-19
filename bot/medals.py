@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import structlog
 from telegram.ext import ContextTypes
@@ -15,14 +15,20 @@ logger = structlog.get_logger()
 _MSK = timezone(timedelta(hours=3))
 
 
-async def assign_medals_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+async def assign_medals_job(
+    context: ContextTypes.DEFAULT_TYPE,
+    target_date: date | None = None,
+) -> None:
     """Award gold 🥇, silver 🥈, bronze 🥉 for the previous MSK calendar day.
 
     Uses dense ranking: tied step counts share the same medal.
     Only the top 3 distinct step values receive medals.
+
+    Pass ``target_date`` to backfill medals for a specific day instead of the
+    previous MSK day (used by ``utils.trigger_medal_report``).
     """
     now_msk = datetime.now(_MSK)
-    yesterday = (now_msk - timedelta(days=1)).date()
+    yesterday = target_date or (now_msk - timedelta(days=1)).date()
 
     day_start = datetime(yesterday.year, yesterday.month,
                          yesterday.day)

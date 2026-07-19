@@ -1,12 +1,17 @@
-"""Manually trigger the medal assignment job for the previous MSK day.
+"""Manually trigger the medal assignment job.
+
+By default it processes the previous MSK day. Pass a date (YYYY-MM-DD or
+DD.MM.YYYY) to backfill medals for a specific day.
 
 Usage (from project root or inside the container):
-    python -m utils.trigger_medal_report
-    docker exec -it tracker_bot python -m utils.trigger_medal_report
+    python -m utils.trigger_medal_report                # previous MSK day
+    python -m utils.trigger_medal_report 2026-07-17     # specific day
+    docker exec -it tracker_bot python -m utils.trigger_medal_report 17.07.2026
 """
 
 import asyncio
 import sys
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import structlog
@@ -23,7 +28,16 @@ setup_logging()
 logger = structlog.get_logger()
 
 
-async def main() -> None:
+def _parse_date(value: str) -> date:
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized date: {value!r} (use YYYY-MM-DD or DD.MM.YYYY)")
+
+
+async def main(target_date: date | None) -> None:
     logger.info("Connecting to MongoDB...")
     await MongoDB.connect(
         mongodb_uri=settings.mongodb_uri,
@@ -33,7 +47,6 @@ async def main() -> None:
     sheets_service = SheetsService(
         credentials_path=settings.google_credentials_path,
         spreadsheet_id=settings.google_sheet_id,
-        steps_worksheet=settings.worksheet_name,
     )
 
     async with Bot(token=settings.telegram_api_key) as bot:
@@ -41,16 +54,24 @@ async def main() -> None:
             bot=bot,
             bot_data={"sheets_service": sheets_service},
         )
-        logger.info("Triggering medal assignment job...")
-        await assign_medals_job(context)
+        logger.info("Triggering medal assignment job...",
+                    target_date=str(target_date) if target_date else "yesterday")
+        await assign_medals_job(context, target_date)
 
     await MongoDB.close()
     logger.info("Done.")
 
 
 if __name__ == "__main__":
+    target = None
+    if len(sys.argv) > 1:
+        try:
+            target = _parse_date(sys.argv[1])
+        except ValueError as exc:
+            logger.error("Invalid date argument", error=str(exc))
+            sys.exit(2)
     try:
-        asyncio.run(main())
+        asyncio.run(main(target))
     except KeyboardInterrupt:
         pass
     except Exception as exc:
