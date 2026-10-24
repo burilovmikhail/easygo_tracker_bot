@@ -2,3 +2,6 @@ __pycache__
 .pycache
 .venv
 .claude
+.env
+credentials.json
+deploy.env
