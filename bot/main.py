@@ -6,6 +6,7 @@ from telegram.ext import Application, MessageHandler, filters
 from bot.ai import AIService
 from bot.config import settings
 from bot.database import MongoDB
+from bot.disk_monitor import check_disk_space_job
 from bot.handlers import handle_message
 from bot.medals import assign_medals_job
 from bot.models import TelegramMessage, TelegramUser, StepReport, MedalRecord
@@ -44,6 +45,17 @@ async def startup(application: Application) -> None:
     _20_MSK_IN_UTC = time(hour=17, minute=0, tzinfo=timezone.utc)
     application.job_queue.run_daily(assign_medals_job, time=_20_MSK_IN_UTC)
     logger.info("Medal assignment job scheduled", utc_time="17:00")
+
+    application.job_queue.run_repeating(
+        check_disk_space_job,
+        interval=settings.disk_check_interval_minutes * 60,
+        first=10,
+    )
+    logger.info(
+        "Disk space check scheduled",
+        interval_minutes=settings.disk_check_interval_minutes,
+        threshold_mb=settings.disk_free_threshold_mb,
+    )
 
     logger.info("Startup complete")
 
