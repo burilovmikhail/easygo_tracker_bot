@@ -73,23 +73,41 @@ class SheetsService:
 
     @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False,
            dont_retry=(NicknameNotFoundError,))
-    def write_steps(self, nickname: str, date: datetime, steps: int) -> None:
-        """Write *steps* into the steps sheet at (nickname, date).
+    def write_steps_many(self, nickname: str, entries: list[tuple[datetime, int]]) -> None:
+        """Write several (date, steps) pairs for one nickname.
 
-        Raises :class:`NicknameNotFoundError` if the nickname is not present in
-        the target month section (the row is not created automatically).
+        All target cells are resolved before anything is written, so a missing
+        nickname row or date column fails the whole call without partial writes.
+        One batch update is sent per worksheet.
         """
-        sheet = self._get_sheet(date)
         nickname = self._normalise_nick(nickname)
 
-        all_values = sheet.get_all_values()
-        col_idx, row_idx = self._ensure_cell(
-            sheet, all_values, nickname, date, create_missing=False
-        )
+        by_sheet: dict[str, list[tuple[datetime, int]]] = {}
+        for date, steps in entries:
+            by_sheet.setdefault(self._worksheet_name(date), []).append((date, steps))
 
-        sheet.update_cell(row_idx + 1, col_idx + 1, steps)
+        planned: list[tuple[gspread.Worksheet, list[dict]]] = []
+        for sheet_entries in by_sheet.values():
+            sheet = self._get_sheet(sheet_entries[0][0])
+            all_values = sheet.get_all_values()
+            updates = []
+            for date, steps in sheet_entries:
+                col_idx, row_idx = self._ensure_cell(
+                    sheet, all_values, nickname, date, create_missing=False
+                )
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1),
+                    "values": [[steps]],
+                })
+            planned.append((sheet, updates))
+
+        for sheet, updates in planned:
+            sheet.batch_update(
+                updates, value_input_option=gspread.utils.ValueInputOption.user_entered
+            )
+
         logger.info("Wrote steps to sheet", nickname=nickname,
-                    date=date.strftime("%d.%m.%Y"), steps=steps)
+                    entries=[(d.strftime("%d.%m.%Y"), s) for d, s in entries])
 
     # RGB (0–1 floats) for each medal place
     _MEDAL_COLORS = {
