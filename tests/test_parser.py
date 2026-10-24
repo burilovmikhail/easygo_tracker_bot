@@ -24,6 +24,37 @@ def test_nickname_report_tag_case_insensitive():
     assert r.nickname == "Bob"
 
 
+@pytest.mark.parametrize("text", [
+    "#отчет #CuriousCat 11.09 5432 #ачивка Золотая осень",
+    "#ачивка Золотая осень #отчет #CuriousCat 11.09 5432",
+    "#Ачивка #отчет #CuriousCat 11.09 5432",
+])
+def test_achievement_tag_ignored(text):
+    r = parse_report(text)
+    assert r.nickname == "CuriousCat"
+    assert r.ambiguous_nicknames == []
+    assert r.steps == 5432
+
+
+def test_achievement_without_nickname_leaves_nickname_empty():
+    r = parse_report("#отчет 11.09 5432 #ачивка Золотая осень")
+    assert r.nickname is None
+    assert r.ambiguous_nicknames == []
+    assert r.steps == 5432
+
+
+def test_several_nicknames_ambiguous():
+    r = parse_report("#отчет #alice #bob 1.5.2024 8000")
+    assert r.nickname is None
+    assert r.ambiguous_nicknames == ["alice", "bob"]
+
+
+def test_same_nickname_twice_not_ambiguous():
+    r = parse_report("#отчет #alice 1.5.2024 8000 #Alice")
+    assert r.nickname == "alice"
+    assert r.ambiguous_nicknames == []
+
+
 def test_nickname_before_report_tag():
     r = parse_report("#alice #отчет 1.5.2024 8000")
     assert r.nickname == "alice"
@@ -123,3 +154,61 @@ def test_empty_report_tag_only():
     assert r.nickname is None
     assert r.date is None
     assert r.steps is None
+
+
+# ---------------------------------------------------------------------------
+# Date range reports
+# ---------------------------------------------------------------------------
+
+def test_range_basic():
+    r = parse_report("#отчет #CuriousCat 21.06-24.06 100,200,5,1943")
+    year = datetime.now().year
+    assert r.is_range
+    assert r.nickname == "CuriousCat"
+    assert r.date == datetime(year, 6, 21)
+    assert r.date_to == datetime(year, 6, 24)
+    assert r.steps_list == [100, 200, 5, 1943]
+
+
+@pytest.mark.parametrize("text", [
+    "#отчет #u 21.06 - 24.06 100, 200, 5, 1943",
+    "#отчет #u 21.06–24.06 100,200,5,1943",
+    "100,200,5,1943 #u 21.06-24.06 #отчет",
+])
+def test_range_spacing_dashes_and_order(text):
+    r = parse_report(text)
+    assert r.is_range
+    assert r.date == datetime(datetime.now().year, 6, 21)
+    assert r.date_to == datetime(datetime.now().year, 6, 24)
+    assert r.steps_list == [100, 200, 5, 1943]
+
+
+def test_range_start_year_taken_from_end():
+    r = parse_report("#отчет #u 30.12-02.01.2025 1,2,3,4")
+    assert r.date == datetime(2025, 12, 30)
+    assert r.date_to == datetime(2025, 1, 2)
+
+
+def test_range_explicit_years():
+    r = parse_report("#отчет #u 30.12.24-02.01.25 1,2,3,4")
+    assert r.date == datetime(2024, 12, 30)
+    assert r.date_to == datetime(2025, 1, 2)
+
+
+def test_range_invalid_date():
+    r = parse_report("#отчет #u 30.06-31.06 1,2")
+    assert r.is_range
+    assert r.date is not None
+    assert r.date_to is None
+
+
+def test_range_steps_missing():
+    r = parse_report("#отчет #u 21.06-24.06")
+    assert r.is_range
+    assert r.steps_list is None
+
+
+def test_single_report_is_not_range():
+    r = parse_report("#отчет #u 21.06 8000")
+    assert not r.is_range
+    assert r.steps_list is None

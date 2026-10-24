@@ -11,6 +11,7 @@ A Telegram bot that collects daily step-count reports from a fitness challenge c
 - **Step report parsing** — members post free-form `#отчет` messages; the bot extracts nickname, date, and step count regardless of word order.
 - **Google Sheets sync** — each accepted report is written to a shared spreadsheet (rows = nicknames, columns = dates). The target worksheet is configurable via `WORKSHEET_NAME`. Missing rows and columns are created automatically.
 - **Daily medals** — every day at 20:00 MSK the bot ranks participants by step count using dense ranking and awards 🥇 gold / 🥈 silver / 🥉 bronze. Tied participants share the same medal. The medal symbol is appended to the participant's step-count cell in the sheet (e.g. `11 000 🥇`) and the result is posted to the configured report channel.
+- **Disk space monitoring** — every 5 minutes the bot checks free disk space and, if it drops below the configured threshold (100 MB by default), posts a randomly chosen complaint to the report channel.
 - **MongoDB storage** — reports and medals are stored in MongoDB for fast aggregation queries. Raw channel messages are stored with a 24-hour TTL.
 - **Nickname memory** — once a user submits a report with a `#nickname`, the bot remembers it; subsequent reports from the same Telegram account do not need to include the tag again.
 - **Leaderboards** — mention the bot with `today-top`, `month-top`, or `totals` to get ranked summaries.
@@ -44,16 +45,31 @@ Components may appear in **any order**:
 25.02.2026 #отчет 8500 #masha
 ```
 
-- **Nickname** — first `#tag` that is not `#отчет` / `#отчёт`.
+- **Nickname** — the only `#tag` that is not a service tag (`#отчет` / `#отчёт` / `#ачивка`). If several different non-service tags are present, the report is rejected as ambiguous.
 - **Date** — first `d.m`, `d.m.yy`, or `d.m.yyyy` pattern. Defaults to today (UTC) when omitted.
 - **Steps** — first standalone integer after removing the date and all hashtags.
+
+### Multi-day reports
+
+Several days can be reported at once with a date range (both ends inclusive) and a comma-separated list of step counts, one per day:
+
+```
+#отчет #CuriousCat 21.06-24.06 100,200,5,1943
+```
+
+- The number of step values must equal the number of days in the range, otherwise the report is rejected.
+- Ranges longer than 31 days, ranges whose start is after the end, and dates outside the current year or in the future are rejected.
+- All cells are checked before writing, so a rejected report never leaves a partially filled range.
 
 | Validation failure | Bot response |
 |---|---|
 | No `#nickname` | `Отсутствует #ник` |
 | No step count | `Отсутствует количество шагов` |
+| Several `#nicknames` | `Непонятно, чей это отчёт: несколько ников (#a, #b)…` |
+| Range: step values ≠ days | `Количество значений шагов (3) не совпадает с числом дней 21.06–24.06 (4)` |
+| Range: start after end / invalid date | `Недопустимый диапазон дат…` |
 | Sheets write error | `Ошибка сохранения данных` |
-| All OK | `#nickname - принято` |
+| All OK | `#nickname - принято` (range: `#nickname - принято (21.06–24.06, дней: 4)`) |
 
 ## Bot Commands (via @mention)
 
@@ -105,6 +121,7 @@ bot/
 ├── database.py    # MongoDB connection manager (motor + beanie)
 ├── sheets.py      # SheetsService: read/write Google Sheets via gspread
 ├── medals.py      # Daily medal assignment job + channel report
+├── disk_monitor.py # Periodic free-disk-space check + low-space alert
 ├── ai.py          # AIService: two-step classify → fetch context → answer
 └── utils/
     ├── logger.py  # structlog setup
@@ -151,6 +168,10 @@ Edit `.env`:
 | `GOOGLE_CREDENTIALS_PATH` | — | `credentials.json` | Path to service account JSON |
 | `WORKSHEET_NAME` | — | `Шаги` | Name of the steps worksheet inside the spreadsheet |
 | `REPORT_CHANNEL_ID` | — | *(disabled)* | Channel ID to post daily medal summaries |
+| `DISK_CHECK_PATH` | — | `.` | Path whose filesystem is monitored for free space |
+| `DISK_FREE_THRESHOLD_MB` | — | `100` | Post a complaint to `REPORT_CHANNEL_ID` when free space drops below this |
+| `DISK_CHECK_INTERVAL_MINUTES` | — | `5` | How often to check free space |
+| `DISK_ALERT_REPEAT_MINUTES` | — | `60` | Minimum interval between repeated alerts while space stays low |
 | `OPENAI_API_KEY` | — | *(disabled)* | Enables the AI assistant feature |
 | `OPENAI_MODEL` | — | `gpt-4o-mini` | OpenAI model to use |
 | `LOG_LEVEL` | — | `INFO` | `INFO` or `DEBUG` |

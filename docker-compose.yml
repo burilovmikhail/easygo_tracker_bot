@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mongodb:
     image: mongo:7
@@ -17,6 +23,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+    logging: *default-logging
 
   bot:
     build:
@@ -33,11 +40,7 @@ services:
         condition: service_healthy
     networks:
       - tracker_network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
 networks:
   tracker_network:

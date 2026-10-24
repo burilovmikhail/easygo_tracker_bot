@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4o-mini"
 
+    # Disk space monitoring (alerts go to REPORT_CHANNEL_ID)
+    disk_check_path: str = "."
+    disk_free_threshold_mb: int = 100
+    disk_check_interval_minutes: int = 5
+    disk_alert_repeat_minutes: int = 60
+
     # Logging
     log_level: str = "INFO"
 

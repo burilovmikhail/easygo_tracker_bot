@@ -12,12 +12,16 @@ from telegram.ext import ContextTypes
 from bot.config import settings
 from bot.medals import assign_medals_job
 from bot.models import TelegramMessage, TelegramUser, StepReport, MedalRecord, MEDAL_SYMBOLS
-from bot.parser import parse_report
+from bot.parser import ReportData, parse_report
+from bot.sheets import NicknameNotFoundError
 
 logger = structlog.get_logger()
 
 # Vladivostok is permanently UTC+10 (no DST since 2014)
 _VLADIVOSTOK_TZ = timezone(timedelta(hours=10))
+
+# Upper bound on the number of days in a range report ("21.06-24.06 ...")
+_MAX_RANGE_DAYS = 31
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +330,19 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
 
     report = parse_report(text)
 
+    # Several candidate nicknames — refuse rather than guess (and don't touch
+    # the stored nickname).
+    if report.ambiguous_nicknames:
+        tags = ", ".join(f"#{t}" for t in report.ambiguous_nicknames)
+        logger.warning("Ambiguous nickname in report", text=text, candidates=tags)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Непонятно, чей это отчёт: несколько ников ({tags}). "
+                 f"Оставьте в отчёте только один #ник. Отчёт не принят.",
+            reply_to_message_id=message_id,
+        )
+        return
+
     try:
         nickname = await _resolve_nickname(user_id, report.nickname)
     except Exception as exc:
@@ -342,41 +359,19 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
         )
         return
 
-    if report.steps is None:
-        logger.warning("Missing steps in report", text=text)
+    if report.is_range:
+        entries, error = _range_entries(report)
+    else:
+        entries, error = _single_entries(report)
 
+    if error:
+        logger.warning("Invalid report", text=text, error=error)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Отсутствует количество шагов",
+            text=error,
             reply_to_message_id=message_id,
         )
         return
-
-    # Default date to today (UTC) when not present in the message
-    report_date = report.date or datetime.now(timezone.utc)
-
-    # Validate date: must be within current year and no later than today in Vladivostok
-    vladivostok_today = datetime.now(_VLADIVOSTOK_TZ).date()
-    if report.date is not None:
-        report_date_only = report.date.date()
-        if report_date_only.year != vladivostok_today.year:
-            logger.warning("Report date is outside current year",
-                           report_date=report_date_only)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Недопустимая дата: принимаются отчёты только за текущий год",
-                reply_to_message_id=message_id,
-            )
-            return
-        if report_date_only > vladivostok_today:
-            logger.warning("Report date is in the future",
-                           report_date=report_date_only)
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Недопустимая дата: дата ещё не наступила",
-                reply_to_message_id=message_id,
-            )
-            return
 
     sheets_service = context.bot_data.get("sheets_service")
     if sheets_service is None:
@@ -389,15 +384,24 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
         return
 
     logger.info("Recording steps", nickname=nickname,
-                report_date=report_date, steps=report.steps)
+                entries=[(d.strftime("%d.%m.%Y"), st) for d, st in entries])
 
     try:
         await asyncio.to_thread(
-            sheets_service.write_steps,
+            sheets_service.write_steps_many,
             nickname,
-            report_date,
-            report.steps,
+            entries,
         )
+    except NicknameNotFoundError:
+        logger.warning("Nickname not found in sheet", nickname=nickname,
+                       dates=[d.strftime("%d.%m.%Y") for d, _ in entries])
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Ник {nickname} не найден в таблице — строка не добавлена. "
+                 f"Проверьте, что ник есть в списке участников.",
+            reply_to_message_id=message_id,
+        )
+        return
     except Exception as exc:
         logger.error("Failed to write to Google Sheets", error=str(exc))
         await context.bot.send_message(
@@ -407,24 +411,86 @@ async def _handle_report(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
         )
         return
 
-    try:
-        await StepReport.find_one(
-            StepReport.nickname == nickname,
-            StepReport.date == report_date,
-        ).upsert(
-            Set({StepReport.steps: report.steps}),
-            on_insert=StepReport(
-                user_id=user_id,
-                nickname=nickname,
-                date=report_date,
-                steps=report.steps,
-            ),
-        )
-    except Exception as exc:
-        logger.error("Failed to save report to MongoDB", error=str(exc))
+    for report_date, steps in entries:
+        try:
+            await StepReport.find_one(
+                StepReport.nickname == nickname,
+                StepReport.date == report_date,
+            ).upsert(
+                Set({StepReport.steps: steps}),
+                on_insert=StepReport(
+                    user_id=user_id,
+                    nickname=nickname,
+                    date=report_date,
+                    steps=steps,
+                ),
+            )
+        except Exception as exc:
+            logger.error("Failed to save report to MongoDB",
+                         report_date=report_date, error=str(exc))
 
     await context.bot.send_message(
         chat_id=chat_id,
-        text=f"#{nickname} - принято",
+        text=f"#{nickname} - принято" + (
+            f" ({entries[0][0]:%d.%m}–{entries[-1][0]:%d.%m}, дней: {len(entries)})"
+            if report.is_range else ""
+        ),
         reply_to_message_id=message_id,
     )
+
+
+def _validate_report_date(report_date: datetime) -> Optional[str]:
+    """Return an error text if the date is outside the current year or in the future."""
+    vladivostok_today = datetime.now(_VLADIVOSTOK_TZ).date()
+    if report_date.date().year != vladivostok_today.year:
+        return "Недопустимая дата: принимаются отчёты только за текущий год"
+    if report_date.date() > vladivostok_today:
+        return "Недопустимая дата: дата ещё не наступила"
+    return None
+
+
+def _single_entries(report: ReportData) -> tuple[list[tuple[datetime, int]], Optional[str]]:
+    """Build the (date, steps) list for a single-day report, or return an error text."""
+    if report.steps is None:
+        return [], "Отсутствует количество шагов"
+
+    if report.date is not None:
+        error = _validate_report_date(report.date)
+        if error:
+            return [], error
+
+    # Default date to today (UTC) when not present in the message
+    return [(report.date or datetime.now(timezone.utc), report.steps)], None
+
+
+def _range_entries(report: ReportData) -> tuple[list[tuple[datetime, int]], Optional[str]]:
+    """Build the (date, steps) list for a date-range report, or return an error text.
+
+    Both range ends are inclusive; the number of step values must equal the
+    number of days in the range.
+    """
+    if report.date is None or report.date_to is None:
+        return [], "Недопустимый диапазон дат"
+    if report.date > report.date_to:
+        return [], "Недопустимый диапазон дат: начало позже конца"
+    if not report.steps_list:
+        return [], "Отсутствует количество шагов"
+
+    for d in (report.date, report.date_to):
+        error = _validate_report_date(d)
+        if error:
+            return [], error
+
+    days = (report.date_to - report.date).days + 1
+    if days > _MAX_RANGE_DAYS:
+        return [], f"Слишком длинный диапазон: не больше {_MAX_RANGE_DAYS} дней"
+    if len(report.steps_list) != days:
+        return [], (
+            f"Количество значений шагов ({len(report.steps_list)}) не совпадает "
+            f"с числом дней {report.date:%d.%m}–{report.date_to:%d.%m} ({days})"
+        )
+
+    return [
+        (report.date + timedelta(days=i), steps)
+        for i, steps in enumerate(report.steps_list)
+    ], None

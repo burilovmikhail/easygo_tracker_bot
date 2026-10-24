@@ -4,7 +4,7 @@ import structlog
 logger = structlog.get_logger()
 
 
-def retry(attempts=10, initial_delay=1, backoff_factor=2, max_delay=300, jitter=True, pass_attempt=False):
+def retry(attempts=10, initial_delay=1, backoff_factor=2, max_delay=300, jitter=True, pass_attempt=False, dont_retry=()):
     def decorator(func):
         def wrapper(*args, **kwargs):
             last_exception = None
@@ -14,6 +14,8 @@ def retry(attempts=10, initial_delay=1, backoff_factor=2, max_delay=300, jitter=
 
                 try:
                     return func(*args, **kwargs)
+                except dont_retry:
+                    raise
                 except Exception as e:
                     last_exception = e
                     delay = min(initial_delay *

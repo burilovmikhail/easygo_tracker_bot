@@ -28,6 +28,17 @@ _SEASON_BY_MONTH = {
 }
 
 
+class NicknameNotFoundError(Exception):
+    """Raised when a nickname row is missing and creation is disabled."""
+
+    def __init__(self, nickname: str, month_header: str) -> None:
+        self.nickname = nickname
+        self.month_header = month_header
+        super().__init__(
+            f"Nickname {nickname} not found in section {month_header}"
+        )
+
+
 class SheetsService:
     """Read/write helper for the step-tracking Google Spreadsheet.
 
@@ -60,18 +71,43 @@ class SheetsService:
     # Public API
     # ------------------------------------------------------------------
 
-    @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False)
-    def write_steps(self, nickname: str, date: datetime, steps: int) -> None:
-        """Write *steps* into the steps sheet at (nickname, date)."""
-        sheet = self._get_sheet(date)
+    @retry(attempts=4, initial_delay=5, backoff_factor=3, max_delay=30, jitter=False,
+           dont_retry=(NicknameNotFoundError,))
+    def write_steps_many(self, nickname: str, entries: list[tuple[datetime, int]]) -> None:
+        """Write several (date, steps) pairs for one nickname.
+
+        All target cells are resolved before anything is written, so a missing
+        nickname row or date column fails the whole call without partial writes.
+        One batch update is sent per worksheet.
+        """
         nickname = self._normalise_nick(nickname)
 
-        all_values = sheet.get_all_values()
-        col_idx, row_idx = self._ensure_cell(sheet, all_values, nickname, date)
+        by_sheet: dict[str, list[tuple[datetime, int]]] = {}
+        for date, steps in entries:
+            by_sheet.setdefault(self._worksheet_name(date), []).append((date, steps))
 
-        sheet.update_cell(row_idx + 1, col_idx + 1, steps)
+        planned: list[tuple[gspread.Worksheet, list[dict]]] = []
+        for sheet_entries in by_sheet.values():
+            sheet = self._get_sheet(sheet_entries[0][0])
+            all_values = sheet.get_all_values()
+            updates = []
+            for date, steps in sheet_entries:
+                col_idx, row_idx = self._ensure_cell(
+                    sheet, all_values, nickname, date, create_missing=False
+                )
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(row_idx + 1, col_idx + 1),
+                    "values": [[steps]],
+                })
+            planned.append((sheet, updates))
+
+        for sheet, updates in planned:
+            sheet.batch_update(
+                updates, value_input_option=gspread.utils.ValueInputOption.user_entered
+            )
+
         logger.info("Wrote steps to sheet", nickname=nickname,
-                    date=date.strftime("%d.%m.%Y"), steps=steps)
+                    entries=[(d.strftime("%d.%m.%Y"), s) for d, s in entries])
 
     # RGB (0–1 floats) for each medal place
     _MEDAL_COLORS = {
@@ -172,10 +208,14 @@ class SheetsService:
         all_values: list[list[str]],
         nickname: str,
         date: datetime,
+        create_missing: bool = True,
     ) -> tuple[int, int]:
         """Return (col_idx, row_idx) for (nickname, date), creating them if needed.
 
         Both indices are 0-based; add 1 when calling sheet.update_cell().
+
+        If ``create_missing`` is False and the nickname row is absent, raise
+        :class:`NicknameNotFoundError` instead of appending a new row.
         """
         month_header = self._month_header(date)
         date_col_str = date.strftime("%d.%m")
@@ -215,6 +255,8 @@ class SheetsService:
                 break
 
         if row_idx is None:
+            if not create_missing:
+                raise NicknameNotFoundError(nickname, month_header)
             row_idx = section["data_end"]
             if row_idx < len(all_values):
                 # Another section follows — insert a row to avoid overwriting it
